@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: obsidian-share-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/app/data/shares.db
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-secret-key}
+      - JWT_SECRET=${JWT_SECRET:-change-this-jwt-secret}
+      - SHARE_URL_PREFIX=http://localhost:3000/share
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+    volumes:
+      - share_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  admin-panel:
+    build:
+      context: ./admin-panel
+      args:
+        - REACT_APP_API_URL=http://localhost:3000/api
+        - REACT_APP_SHARE_URL_PREFIX=http://localhost:3000/share
+    container_name: obsidian-share-admin
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  share_data:
+    driver: local

@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-share-system",
+  "version": "1.0.0",
+  "description": "Complete Obsidian share system with plugin, backend API, and admin panel",
+  "scripts": {
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd admin-panel && npm start\"",
+    "build": "cd obsidian-share-plugin && npm run build && cd ../admin-panel && npm run build",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "test": "cd backend && npm test",
+    "lint": "cd obsidian-share-plugin && npm run lint && cd ../backend && npx eslint src/ && cd ../admin-panel && npm run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.1"
+  },
+  "workspaces": [
+    "obsidian-share-plugin",
+    "backend",
+    "admin-panel"
+  ]
+}

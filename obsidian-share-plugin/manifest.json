@@ -1,0 +1,11 @@
+{
+  "id": "obsidian-share-plugin",
+  "name": "Share Plugin",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "Adds a floating share button to share notes to a public URL",
+  "author": "",
+  "authorUrl": "",
+  "fundingUrl": "",
+  "isDesktopOnly": false
+}
