@@ -391,7 +391,7 @@ function renderPageShell({ title, body, description = 'YxMdShare 分享内容' }
 			margin-left: -1.4rem;
 			display: grid;
 			grid-template-columns: 16px minmax(0, 1fr);
-			align-items: start;
+			align-items: baseline;
 			gap: 0.65rem;
 		}
 
@@ -405,15 +405,16 @@ function renderPageShell({ title, body, description = 'YxMdShare 分享内容' }
 		.markdown li > p > input[type="checkbox"] {
 			appearance: none;
 			-webkit-appearance: none;
-			vertical-align: -0.12em;
-			margin: 0 0.55rem 0 0;
+			align-self: baseline;
+			vertical-align: middle;
+			margin: 0.18rem 0.55rem 0 0;
 			width: 18px;
 			height: 18px;
 			flex: 0 0 auto;
 			pointer-events: none;
 			border-radius: 5px;
 			border: 1.5px solid #dc2626;
-			background: #dc2626;
+			background: transparent;
 			position: relative;
 			opacity: 1;
 			box-shadow: none;
@@ -446,14 +447,7 @@ function renderPageShell({ title, body, description = 'YxMdShare 分享内容' }
 
 		.markdown li > input[type="checkbox"]:not(:checked)::before,
 		.markdown li > p > input[type="checkbox"]:not(:checked)::before {
-			content: "";
-			position: absolute;
-			left: 4px;
-			top: 7px;
-			width: 8px;
-			height: 2px;
-			border-radius: 999px;
-			background: #ffffff;
+			content: none;
 		}
 
 		.markdown li:has(> input[type="checkbox"]) > ul,
