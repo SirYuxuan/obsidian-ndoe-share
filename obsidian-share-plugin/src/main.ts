@@ -9,7 +9,7 @@ interface SharePluginSettings {
 }
 
 const DEFAULT_SETTINGS: SharePluginSettings = {
-	apiUrl: 'http://localhost:3000/api',
+	apiUrl: 'https://s.oofo.cc/api',
 	apiKey: '',
 	defaultPassword: '',
 	autoCopyToClipboard: true,
@@ -207,18 +207,18 @@ export default class SharePlugin extends Plugin {
 				font-size: 14px;
 				vertical-align: middle;
 			}
+			.share-modal .select-wrap {
+				position: relative;
+				width: 100%;
+			}
 			.share-modal .share-select {
 				display: block;
 				width: 100%;
 				min-height: 42px;
-				padding: 8px 28px 8px 12px;
+				padding: 8px 30px 8px 12px;
 				border: 1px solid var(--background-modifier-border);
 				border-radius: 8px;
 				background: var(--background-primary);
-				background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%23888888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-				background-position: right 10px center;
-				background-repeat: no-repeat;
-				background-size: 12px 12px;
 				color: var(--text-normal);
 				box-sizing: border-box;
 				line-height: 1.4;
@@ -227,6 +227,19 @@ export default class SharePlugin extends Plugin {
 				appearance: none;
 				-webkit-appearance: none;
 				-moz-appearance: none;
+			}
+			.share-modal .select-arrow {
+				position: absolute;
+				top: 50%;
+				right: 10px;
+				width: 12px;
+				height: 12px;
+				transform: translateY(-50%);
+				pointer-events: none;
+				color: var(--text-muted);
+				display: flex;
+				align-items: center;
+				justify-content: center;
 			}
 			.share-modal .field.is-hidden {
 				display: none;
@@ -266,16 +279,21 @@ export default class SharePlugin extends Plugin {
 
 	async shareNote(content: string, options?: { title?: string, password?: string, expireDays?: number, expiresAt?: string | null }) {
 		try {
+			const payload: Record<string, unknown> = {
+				title: options?.title || '未命名分享',
+				content: content,
+				password: options?.password || '',
+				expireDays: options?.expireDays ?? 30
+			};
+
+			if (options?.expiresAt) {
+				payload.expiresAt = options.expiresAt;
+			}
+
 			const response = await fetch(`${this.getApiBaseUrl()}/shares`, {
 				method: 'POST',
 				headers: this.buildApiHeaders(),
-				body: JSON.stringify({
-					title: options?.title || '未命名分享',
-					content: content,
-					password: options?.password || '',
-					expireDays: options?.expireDays ?? 30,
-					expiresAt: options?.expiresAt || null
-				})
+				body: JSON.stringify(payload)
 			});
 
 			if (!response.ok) {
@@ -373,7 +391,8 @@ class ShareModal extends Modal {
 
 		const expireField = formEl.createDiv({ cls: 'field' });
 		expireField.createEl('label', { text: '有效期', cls: 'field-label' });
-		const expireSelect = expireField.createEl('select', { cls: 'share-select' });
+		const expireSelectWrap = expireField.createDiv({ cls: 'select-wrap' });
+		const expireSelect = expireSelectWrap.createEl('select', { cls: 'share-select' });
 		expireSelect.innerHTML = `
 			<option value="1">1 天</option>
 			<option value="7">7 天</option>
@@ -382,6 +401,7 @@ class ShareModal extends Modal {
 			<option value="0">永不过期</option>
 			<option value="custom">自定义日期时间</option>
 		`;
+		expireSelectWrap.createEl('span', { cls: 'select-arrow', text: '▾' });
 		const customExpireField = formEl.createDiv({ cls: 'field is-hidden' });
 		customExpireField.createEl('label', { text: '自定义过期时间', cls: 'field-label' });
 		const customExpireInput = customExpireField.createEl('input', {
@@ -466,7 +486,7 @@ class ShareSettingTab extends PluginSettingTab {
 			.setName('后端接口地址')
 			.setDesc('分享服务后端 API 地址')
 			.addText(text => text
-				.setPlaceholder('http://localhost:3000/api')
+				.setPlaceholder('https://s.oofo.cc/api')
 				.setValue(this.plugin.settings.apiUrl)
 				.onChange(async (value) => {
 					this.plugin.settings.apiUrl = value;

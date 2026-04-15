@@ -11,7 +11,7 @@ services:
       - DB_PATH=/app/data/shares.db
       - SESSION_SECRET=${SESSION_SECRET:-change-this-secret-key}
       - JWT_SECRET=${JWT_SECRET:-change-this-jwt-secret}
-      - SHARE_URL_PREFIX=http://localhost:3000/share
+      - SHARE_URL_PREFIX=https://s.oofo.cc/share
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
     volumes:
@@ -28,8 +28,8 @@ services:
     build:
       context: ./admin-panel
       args:
-        - REACT_APP_API_URL=http://localhost:3000/api
-        - REACT_APP_SHARE_URL_PREFIX=http://localhost:3000/share
+        - REACT_APP_API_URL=https://s.oofo.cc/api
+        - REACT_APP_SHARE_URL_PREFIX=https://s.oofo.cc/share
     container_name: obsidian-share-admin
     ports:
       - "3001:3000"

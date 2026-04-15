@@ -76,11 +76,12 @@ class Database {
 		`, (err) => {
 			if (err) {
 				console.error('Error creating admins table:', err);
+			} else {
+				this.ensureAdminColumns();
+				// Ensure the default admin is created only after the admins table exists.
+				this.createDefaultAdmin();
 			}
 		});
-
-		// Create default admin if not exists
-		this.createDefaultAdmin();
 	}
 
 	ensureShareColumns() {
@@ -96,6 +97,34 @@ class Database {
 					if (alterErr) {
 						console.error('Error adding title column to shares table:', alterErr);
 					}
+				});
+			}
+		});
+	}
+
+	ensureAdminColumns() {
+		this.db.all('PRAGMA table_info(admins)', (err, columns) => {
+			if (err) {
+				console.error('Error inspecting admins table:', err);
+				return;
+			}
+
+			const hasNicknameColumn = columns.some((column) => column.name === 'nickname');
+			if (!hasNicknameColumn) {
+				this.db.run('ALTER TABLE admins ADD COLUMN nickname TEXT', (alterErr) => {
+					if (alterErr) {
+						console.error('Error adding nickname column to admins table:', alterErr);
+						return;
+					}
+
+					this.db.run(
+						'UPDATE admins SET nickname = username WHERE nickname IS NULL OR nickname = ""',
+						(updateErr) => {
+							if (updateErr) {
+								console.error('Error filling default admin nicknames:', updateErr);
+							}
+						}
+					);
 				});
 			}
 		});
@@ -117,8 +146,8 @@ class Database {
 				const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS) || 10;
 				const passwordHash = bcrypt.hashSync(defaultPassword, saltRounds);
 
-				const insertQuery = 'INSERT INTO admins (username, password_hash) VALUES (?, ?)';
-				this.db.run(insertQuery, [defaultUsername, passwordHash], (err) => {
+				const insertQuery = 'INSERT INTO admins (username, nickname, password_hash) VALUES (?, ?, ?)';
+				this.db.run(insertQuery, [defaultUsername, defaultUsername, passwordHash], (err) => {
 					if (err) {
 						console.error('Error creating default admin:', err);
 					} else {
@@ -311,6 +340,97 @@ class Database {
 						this.db.run('UPDATE admins SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [row.id]);
 					}
 					resolve(isValid);
+				}
+			});
+		});
+	}
+
+	getAdminProfile(username) {
+		return new Promise((resolve, reject) => {
+			const query = `
+				SELECT id, username, nickname, created_at, last_login_at
+				FROM admins
+				WHERE username = ?
+			`;
+			this.db.get(query, [username], (err, row) => {
+				if (err) {
+					reject(err);
+				} else {
+					resolve(row || null);
+				}
+			});
+		});
+	}
+
+	updateAdminProfile(currentUsername, { nickname, username, currentPassword, newPassword }) {
+		return new Promise((resolve, reject) => {
+			const query = 'SELECT * FROM admins WHERE username = ?';
+			this.db.get(query, [currentUsername], (err, admin) => {
+				if (err) {
+					reject(err);
+					return;
+				}
+
+				if (!admin) {
+					resolve({ success: false, error: '管理员账号不存在' });
+					return;
+				}
+
+				const bcrypt = require('bcryptjs');
+				const isValid = bcrypt.compareSync(currentPassword, admin.password_hash);
+				if (!isValid) {
+					resolve({ success: false, error: '当前密码不正确' });
+					return;
+				}
+
+				const nextUsername = username.trim();
+				const nextNickname = nickname.trim();
+				const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS) || 10;
+				const nextPasswordHash = newPassword
+					? bcrypt.hashSync(newPassword, saltRounds)
+					: admin.password_hash;
+
+				const applyUpdate = () => {
+					const updateQuery = `
+						UPDATE admins
+						SET username = ?, nickname = ?, password_hash = ?
+						WHERE id = ?
+					`;
+					this.db.run(
+						updateQuery,
+						[nextUsername, nextNickname, nextPasswordHash, admin.id],
+						(updateErr) => {
+							if (updateErr) {
+								reject(updateErr);
+							} else {
+								resolve({
+									success: true,
+									data: {
+										username: nextUsername,
+										nickname: nextNickname
+									}
+								});
+							}
+						}
+					);
+				};
+
+				if (nextUsername !== currentUsername) {
+					this.db.get(
+						'SELECT id FROM admins WHERE username = ? AND id != ?',
+						[nextUsername, admin.id],
+						(duplicateErr, duplicate) => {
+							if (duplicateErr) {
+								reject(duplicateErr);
+							} else if (duplicate) {
+								resolve({ success: false, error: '该账号名已被使用' });
+							} else {
+								applyUpdate();
+							}
+						}
+					);
+				} else {
+					applyUpdate();
 				}
 			});
 		});

@@ -1,8 +1,8 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { FiLogOut, FiHome, FiShare2, FiBarChart2 } from 'react-icons/fi';
+import { FiLogOut, FiHome, FiShare2, FiBarChart2, FiUser } from 'react-icons/fi';
 
-const Navbar = ({ onLogout }) => {
+const Navbar = ({ adminProfile, onLogout }) => {
 	const navigate = useNavigate();
 
 	const getNavClassName = ({ isActive }) =>
@@ -51,9 +51,24 @@ const Navbar = ({ onLogout }) => {
 								<FiBarChart2 className="mr-2" />
 								统计分析
 							</NavLink>
+							<NavLink
+								to="/profile"
+								className={getNavClassName}
+							>
+								<FiUser className="mr-2" />
+								个人资料
+							</NavLink>
 						</div>
 					</div>
-					<div className="flex items-center">
+					<div className="flex items-center gap-3">
+						<div className="hidden md:flex flex-col items-end">
+							<span className="text-sm font-medium text-gray-900">
+								{adminProfile?.nickname || adminProfile?.username || '管理员'}
+							</span>
+							<span className="text-xs text-gray-500">
+								账号：{adminProfile?.username || '未登录'}
+							</span>
+						</div>
 						<button
 							onClick={handleLogout}
 							className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"

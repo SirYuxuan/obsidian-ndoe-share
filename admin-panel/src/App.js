@@ -5,29 +5,49 @@ import Dashboard from './components/Dashboard';
 import SharesList from './components/SharesList';
 import ShareDetail from './components/ShareDetail';
 import Statistics from './components/Statistics';
+import Profile from './components/Profile';
 import Navbar from './components/Navbar';
+import { adminAPI, clearAdminToken } from './utils/api';
 import './index.css';
 
 function App() {
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const [loading, setLoading] = useState(true);
+	const [adminProfile, setAdminProfile] = useState(null);
 
 	useEffect(() => {
-		// Check if user is already authenticated
 		const token = localStorage.getItem('adminToken');
-		if (token) {
-			setIsAuthenticated(true);
+		if (!token) {
+			setLoading(false);
+			return;
 		}
-		setLoading(false);
+
+		adminAPI.getProfile()
+			.then((response) => {
+				setAdminProfile(response.data);
+				setIsAuthenticated(true);
+			})
+			.catch(() => {
+				clearAdminToken();
+				setIsAuthenticated(false);
+			})
+			.finally(() => {
+				setLoading(false);
+			});
 	}, []);
 
-	const handleLogin = (username) => {
-		// Authentication is already handled by adminAPI.login which stores the token
+	const handleLogin = (profile) => {
+		setAdminProfile(profile);
 		setIsAuthenticated(true);
 	};
 
+	const handleProfileUpdate = (profile) => {
+		setAdminProfile(profile);
+	};
+
 	const handleLogout = () => {
-		localStorage.removeItem('adminToken');
+		clearAdminToken();
+		setAdminProfile(null);
 		setIsAuthenticated(false);
 	};
 
@@ -42,7 +62,7 @@ function App() {
 	return (
 		<Router>
 			<div className="min-h-screen bg-gray-50">
-				{isAuthenticated && <Navbar onLogout={handleLogout} />}
+				{isAuthenticated && <Navbar adminProfile={adminProfile} onLogout={handleLogout} />}
 				<Routes>
 					<Route
 						path="/login"
@@ -89,6 +109,16 @@ function App() {
 						element={
 							isAuthenticated ? (
 								<Statistics />
+							) : (
+								<Navigate to="/login" />
+							)
+						}
+					/>
+					<Route
+						path="/profile"
+						element={
+							isAuthenticated ? (
+								<Profile adminProfile={adminProfile} onProfileUpdate={handleProfileUpdate} />
 							) : (
 								<Navigate to="/login" />
 							)

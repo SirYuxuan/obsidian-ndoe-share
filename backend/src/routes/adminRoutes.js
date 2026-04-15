@@ -46,10 +46,11 @@ router.post('/login', [
 		const isValid = await db.validateAdmin(username, password);
 
 		if (isValid) {
+			const profile = await db.getAdminProfile(username);
 			res.json({
 				success: true,
 				message: '登录成功',
-				username
+				data: profile
 			});
 		} else {
 			res.status(401).json({ error: '用户名或密码错误' });
@@ -57,6 +58,64 @@ router.post('/login', [
 	} catch (error) {
 		console.error('Login error:', error);
 		res.status(500).json({ error: '登录失败' });
+	}
+});
+
+router.get('/profile', requireAdmin, async (req, res) => {
+	try {
+		const profile = await db.getAdminProfile(req.adminUsername);
+		if (!profile) {
+			return res.status(404).json({ error: '未找到管理员资料' });
+		}
+
+		res.json({
+			success: true,
+			data: profile
+		});
+	} catch (error) {
+		console.error('Error getting admin profile:', error);
+		res.status(500).json({ error: '获取个人资料失败' });
+	}
+});
+
+router.put('/profile', requireAdmin, [
+	body('nickname').trim().notEmpty().withMessage('昵称不能为空'),
+	body('username').trim().notEmpty().withMessage('账号不能为空'),
+	body('currentPassword').notEmpty().withMessage('请输入当前密码'),
+	body('newPassword').optional({ nullable: true, checkFalsy: true }).isLength({ min: 6 }).withMessage('新密码至少需要 6 位'),
+	body('confirmPassword').optional({ nullable: true, checkFalsy: true }).custom((value, { req }) => {
+		if ((req.body.newPassword || '') !== (value || '')) {
+			throw new Error('两次输入的新密码不一致');
+		}
+		return true;
+	})
+], async (req, res) => {
+	try {
+		const errors = validationResult(req);
+		if (!errors.isEmpty()) {
+			return res.status(400).json({ error: '请求参数校验失败', details: errors.array() });
+		}
+
+		const result = await db.updateAdminProfile(req.adminUsername, {
+			nickname: req.body.nickname,
+			username: req.body.username,
+			currentPassword: req.body.currentPassword,
+			newPassword: req.body.newPassword ? req.body.newPassword : ''
+		});
+
+		if (!result.success) {
+			return res.status(400).json({ error: result.error });
+		}
+
+		const profile = await db.getAdminProfile(result.data.username);
+		res.json({
+			success: true,
+			message: '个人资料已更新',
+			data: profile
+		});
+	} catch (error) {
+		console.error('Error updating admin profile:', error);
+		res.status(500).json({ error: '更新个人资料失败' });
 	}
 });
 

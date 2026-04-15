@@ -47,7 +47,7 @@ router.post('/', [
 	body('content').notEmpty().withMessage('Content is required'),
 	body('password').optional().isString(),
 	body('expireDays').optional().isInt({ min: 0 }),
-	body('expiresAt').optional().isISO8601().withMessage('expiresAt 格式无效')
+	body('expiresAt').optional({ nullable: true, checkFalsy: true }).isISO8601().withMessage('expiresAt 格式无效')
 ], requireShareApiKey, async (req, res) => {
 	try {
 		// Validate input

@@ -1,7 +1,17 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://s.oofo.cc/api';
+
+export const setAdminToken = (username, password) => {
+	const token = btoa(`${username}:${password}`);
+	localStorage.setItem('adminToken', token);
+	return token;
+};
+
+export const clearAdminToken = () => {
+	localStorage.removeItem('adminToken');
+};
 
 // Create axios instance with basic auth
 const createApiClient = () => {
@@ -44,12 +54,18 @@ const api = createApiClient();
 
 // Admin API
 export const adminAPI = {
-	login: (username, password) => {
-		// 创建Basic Auth token
-		const token = btoa(`${username}:${password}`);
-		// 存储到localStorage
-		localStorage.setItem('adminToken', token);
-		return api.post('/admin/login', { username, password });
+	login: async (username, password) => {
+		const response = await api.post('/admin/login', { username, password });
+		setAdminToken(username, password);
+		return response;
+	},
+
+	getProfile: () => {
+		return api.get('/admin/profile');
+	},
+
+	updateProfile: (payload) => {
+		return api.put('/admin/profile', payload);
 	},
 
 	getShares: (page = 1, limit = 20, search = '') => {

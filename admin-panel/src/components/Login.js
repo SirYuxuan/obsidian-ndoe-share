@@ -17,7 +17,7 @@ const Login = ({ onLogin }) => {
 			const response = await adminAPI.login(username, password);
 			if (response.success) {
 				toast.success('登录成功');
-				onLogin(username);
+				onLogin(response.data);
 				navigate('/dashboard');
 			}
 		} catch (error) {
@@ -82,11 +82,6 @@ const Login = ({ onLogin }) => {
 						>
 							{loading ? '登录中...' : '登录'}
 						</button>
-					</div>
-
-					<div className="text-sm text-gray-600 text-center">
-						<p>默认账号:</p>
-						<p className="font-mono">admin / admin123</p>
 					</div>
 				</form>
 			</div>

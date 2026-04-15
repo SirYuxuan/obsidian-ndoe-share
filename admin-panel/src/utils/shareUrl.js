@@ -11,5 +11,5 @@ export const buildShareUrl = (shareId) => {
 		return `${stripTrailingSlash(apiBaseUrl).replace(/\/api$/, '')}/share/${shareId}`;
 	}
 
-	return `http://localhost:3000/share/${shareId}`;
+	return `https://s.oofo.cc/share/${shareId}`;
 };
