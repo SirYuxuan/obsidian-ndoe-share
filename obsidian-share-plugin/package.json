@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-share-plugin",
+  "name": "yx-md-share",
   "version": "0.1.0",
   "description": "Obsidian plugin to share notes with a floating share button",
   "main": "dist/main.js",
@@ -9,8 +9,13 @@
     "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
   "keywords": ["obsidian", "plugin", "share", "notes"],
-  "author": "",
+  "author": "Sir丶雨轩 <https://oofo.cc>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SirYuxuan/obsidian-ndoe-share"
+  },
+  "homepage": "https://github.com/SirYuxuan/obsidian-ndoe-share",
   "devDependencies": {
     "@types/node": "^16.11.6",
     "@typescript-eslint/eslint-plugin": "5.29.0",

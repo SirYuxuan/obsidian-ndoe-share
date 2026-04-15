@@ -39,8 +39,8 @@ function formatCompletionDate(dateString) {
 
 function preprocessMarkdown(content = '') {
 	return content
-		.replace(/([^\n])(!\[[^\]]*\]\([^)]+\))/g, '$1\n\n$2')
-		.replace(/(!\[[^\]]*\]\([^)]+\))([^\n])/g, '$1\n\n$2');
+		.replace(/([^\n\s])(!\[[^\]]*\]\([^)]+\))/g, '$1\n\n$2')
+		.replace(/(!\[[^\]]*\]\([^)]+\))([^\n\s])/g, '$1\n\n$2');
 }
 
 function getCalloutMeta(type) {
@@ -111,11 +111,16 @@ function injectCompletionChip(rawHtml) {
 	});
 }
 
+function unwrapImageOnlyParagraphs(rawHtml) {
+	return rawHtml.replace(/<p>\s*((?:<img\b[^>]*>\s*)+)<\/p>/g, '$1');
+}
+
 function renderMarkdown(content) {
 	const rawHtml = marked.parse(preprocessMarkdown(content));
 	const htmlWithCallouts = injectObsidianCallouts(rawHtml);
 	const htmlWithCompletionChip = injectCompletionChip(htmlWithCallouts);
-	return sanitizeHtml(htmlWithCompletionChip, {
+	const htmlWithUnwrappedImages = unwrapImageOnlyParagraphs(htmlWithCompletionChip);
+	return sanitizeHtml(htmlWithUnwrappedImages, {
 		allowedTags: sanitizeHtml.defaults.allowedTags.concat([
 			'img', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
 			'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'div', 'span',
@@ -141,7 +146,7 @@ function renderMarkdown(content) {
 	});
 }
 
-function renderPageShell({ title, body, description = 'Obsidian 分享内容' }) {
+function renderPageShell({ title, body, description = 'YxMdShare 分享内容' }) {
 	return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -274,8 +279,9 @@ function renderPageShell({ title, body, description = 'Obsidian 分享内容' })
 			max-width: 100%;
 			height: auto;
 			border-radius: 14px;
-			display: block;
-			margin: 1rem 0;
+			display: inline-block;
+			vertical-align: top;
+			margin: 0.85rem 0.5rem 0.85rem 0;
 		}
 
 		.markdown pre {
@@ -370,7 +376,8 @@ function renderPageShell({ title, body, description = 'Obsidian 分享内容' })
 		.markdown ul ol,
 		.markdown ol ul,
 		.markdown ol ol {
-			margin-top: 0.35rem;
+			margin-top: -0.5rem;
+			margin-left: 20px;
 			padding-left: 1.25rem;
 		}
 
@@ -454,7 +461,7 @@ function renderPageShell({ title, body, description = 'Obsidian 分享内容' })
 		.markdown li:has(> p > input[type="checkbox"]) > ul,
 		.markdown li:has(> p > input[type="checkbox"]) > ol {
 			grid-column: 2;
-			margin-top: 0.35rem;
+			margin-top: -0.5rem;
 		}
 
 		.markdown .completion-chip {
@@ -541,7 +548,7 @@ function renderPageShell({ title, body, description = 'Obsidian 分享内容' })
 <body>
 	<div class="page">
 		${body}
-		<div class="footer">由 Obsidian Share 提供分享服务</div>
+		<div class="footer">由 YxMdShare 提供分享服务</div>
 	</div>
 </body>
 </html>`;
@@ -556,11 +563,11 @@ function renderShareView({ shareId, share, contentHtml }) {
 	const shareTitle = resolveTitle(share);
 
 	return renderPageShell({
-		title: `${shareTitle} - Obsidian 分享`,
+		title: `${shareTitle} - YxMdShare分享`,
 		description: shareTitle,
 		body: `
 			<section class="hero">
-				<span class="eyebrow">Obsidian 分享</span>
+				<span class="eyebrow">YxMdShare分享</span>
 				<h1>${escapeHtml(shareTitle)}</h1>
 			</section>
 			<section class="card compact-card">

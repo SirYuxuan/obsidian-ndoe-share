@@ -1,15 +1,15 @@
-# Obsidian Share Plugin & Backend System
+# YxMdShare Plugin & Backend System
 
-这是一个完整的Obsidian笔记分享系统，包含：
+这是一个完整的 YxMdShare 笔记分享系统，包含：
 
-1. **Obsidian插件** - 在Obsidian中添加悬浮分享按钮
+1. **YxMdShare 插件** - 在 Obsidian 中添加悬浮分享按钮
 2. **后端API服务** - Node.js + Express API服务，处理文件分享
 3. **后台管理面板** - React后台管理系统，管理分享链接和统计
 4. **Docker容器化** - 使用Docker Compose一键部署
 
 ## 功能特性
 
-### Obsidian插件
+### YxMdShare 插件
 - 在文章页面添加悬浮分享按钮
 - 支持密码保护分享
 - 设置分享过期时间
@@ -52,12 +52,12 @@ docker-compose up -d
 - 后台管理: http://localhost:3001
 - API文档: http://localhost:3000/api-docs (开发中)
 
-### 3. 安装Obsidian插件
+### 3. 安装 YxMdShare 插件
 
 #### 方法一：手动安装
-1. 在Obsidian插件市场搜索 "Share Plugin"
+1. 在 Obsidian 插件市场搜索 `YxMdShare`
 2. 或者手动安装：
-   - 将 `obsidian-share-plugin` 文件夹复制到您的Obsidian vault的 `.obsidian/plugins/` 目录
+   - 将插件文件复制到您的 Obsidian vault 的 `.obsidian/plugins/yx-md-share/` 目录
    - 在Obsidian中启用插件
 
 #### 方法二：开发模式
@@ -67,8 +67,8 @@ npm install
 npm run dev
 ```
 
-### 4. 配置Obsidian插件
-1. 在Obsidian设置中找到 "Share Plugin"
+### 4. 配置 YxMdShare 插件
+1. 在 Obsidian 设置中找到 `YxMdShare`
 2. 设置API URL为 `http://localhost:3000/api`
 3. 配置默认密码（可选）
 4. 保存设置
@@ -166,7 +166,7 @@ npm install
 npm start
 ```
 
-### Obsidian插件开发
+### YxMdShare 插件开发
 ```bash
 cd obsidian-share-plugin
 npm install

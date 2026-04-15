@@ -1,11 +1,11 @@
 {
-  "id": "obsidian-share-plugin",
-  "name": "Share Plugin",
+  "id": "yx-md-share",
+  "name": "YxMdShare",
   "version": "0.1.0",
   "minAppVersion": "0.15.0",
   "description": "Adds a floating share button to share notes to a public URL",
-  "author": "",
-  "authorUrl": "",
+  "author": "Sir丶雨轩",
+  "authorUrl": "https://oofo.cc",
   "fundingUrl": "",
   "isDesktopOnly": false
 }
