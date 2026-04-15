@@ -34,11 +34,22 @@ var DEFAULT_SETTINGS = {
   autoCopyToClipboard: true,
   showNotification: true
 };
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+function formatLocalDateTimeInputValue(date) {
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60 * 1e3);
+  return localDate.toISOString().slice(0, 16);
+}
 var SharePlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.shareButton = null;
-    this.stylesInjected = false;
+    this.shareButtonTimeoutId = null;
   }
   async onload() {
     await this.loadSettings();
@@ -47,12 +58,24 @@ var SharePlugin = class extends import_obsidian.Plugin {
         this.addShareButton();
       })
     );
-    setTimeout(() => this.addShareButton(), 1e3);
     this.registerEvent(
-      this.app.workspace.on("file-menu", (menu, file) => {
+      this.app.workspace.on("layout-change", () => {
+        this.addShareButton();
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => {
+        this.addShareButton();
+      })
+    );
+    this.shareButtonTimeoutId = window.setTimeout(() => {
+      this.addShareButton();
+    }, 1e3);
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu) => {
         menu.addItem((item) => {
-          item.setTitle("\u5206\u4EAB\u5F53\u524D\u7B14\u8BB0").setIcon("upload").onClick(async () => {
-            await this.shareCurrentNote();
+          item.setTitle("\u5206\u4EAB\u5F53\u524D\u7B14\u8BB0").setIcon("upload").onClick(() => {
+            this.runTask(this.shareCurrentNote(), "share note from file menu");
           });
         });
       })
@@ -60,24 +83,34 @@ var SharePlugin = class extends import_obsidian.Plugin {
     this.addCommand({
       id: "share-note",
       name: "\u5206\u4EAB\u5F53\u524D\u7B14\u8BB0",
-      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "s" }],
-      editorCallback: async (editor, view) => {
-        await this.shareCurrentNote();
+      editorCallback: (_editor, _ctx) => {
+        this.runTask(this.shareCurrentNote(), "share note from command");
       }
     });
     this.addSettingTab(new ShareSettingTab(this.app, this));
   }
   onunload() {
+    if (this.shareButtonTimeoutId !== null) {
+      window.clearTimeout(this.shareButtonTimeoutId);
+      this.shareButtonTimeoutId = null;
+    }
     if (this.shareButton) {
       this.shareButton.remove();
       this.shareButton = null;
     }
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const savedSettings = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings != null ? savedSettings : {});
   }
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+  runTask(task, context) {
+    task.catch((error) => {
+      console.error(`Unexpected error in ${context}:`, error);
+      new import_obsidian.Notice(`\u64CD\u4F5C\u5931\u8D25\uFF1A${getErrorMessage(error)}`);
+    });
   }
   getApiBaseUrl() {
     return this.settings.apiUrl.trim().replace(/\/+$/, "");
@@ -92,162 +125,47 @@ var SharePlugin = class extends import_obsidian.Plugin {
     }
     return headers;
   }
-  async addShareButton() {
+  async requestShareApi(path, method, body) {
     var _a;
+    const response = await (0, import_obsidian.requestUrl)({
+      url: `${this.getApiBaseUrl()}${path}`,
+      method,
+      headers: this.buildApiHeaders(),
+      body: body ? JSON.stringify(body) : void 0
+    });
+    const result = (_a = response.json) != null ? _a : {};
+    if (response.status >= 400) {
+      throw new Error(result.error || `\u8BF7\u6C42\u5931\u8D25\uFF0C\u72B6\u6001\u7801\uFF1A${response.status}`);
+    }
+    return result;
+  }
+  addShareButton() {
     if (this.shareButton) {
       this.shareButton.remove();
       this.shareButton = null;
     }
-    const activeLeaf = this.app.workspace.activeLeaf;
-    if (!activeLeaf)
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+    if (!view || view.getViewType() !== "markdown") {
       return;
-    const view = activeLeaf.view;
-    if (view.getViewType() !== "markdown")
-      return;
-    const editorContainer = view.containerEl.querySelector(".cm-editor");
-    if (!editorContainer)
-      return;
+    }
+    const buttonHost = this.getShareButtonHost(view);
     this.shareButton = document.createElement("div");
     this.shareButton.className = "share-floating-button";
-    this.shareButton.innerHTML = `
-			<button class="share-button" aria-label="\u5206\u4EAB\u5F53\u524D\u7B14\u8BB0">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
-					<polyline points="16 6 12 2 8 6"></polyline>
-					<line x1="12" y1="2" x2="12" y2="15"></line>
-				</svg>
-			</button>
-		`;
-    if (!this.stylesInjected) {
-      this.injectStyles();
-      this.stylesInjected = true;
-    }
-    (_a = this.shareButton.querySelector(".share-button")) == null ? void 0 : _a.addEventListener("click", async () => {
-      await this.shareCurrentNote();
+    const shareButton = this.shareButton.createEl("button", {
+      cls: "share-button",
+      attr: {
+        "aria-label": "\u5206\u4EAB\u5F53\u524D\u7B14\u8BB0"
+      }
     });
-    editorContainer.appendChild(this.shareButton);
+    (0, import_obsidian.setIcon)(shareButton, "upload");
+    shareButton.addEventListener("click", () => {
+      this.runTask(this.shareCurrentNote(), "share note from floating button");
+    });
+    buttonHost.appendChild(this.shareButton);
   }
-  injectStyles() {
-    const style = document.createElement("style");
-    style.id = "obsidian-share-plugin-styles";
-    style.textContent = `
-			.share-floating-button {
-				position: absolute;
-				top: 20px;
-				right: 20px;
-				z-index: 1000;
-			}
-			.share-button {
-				background: var(--interactive-accent);
-				color: white;
-				border: none;
-				border-radius: 50%;
-				width: 40px;
-				height: 40px;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				cursor: pointer;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-				transition: all 0.2s ease;
-			}
-			.share-button:hover {
-				transform: scale(1.1);
-				box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-			}
-			.share-button:active {
-				transform: scale(0.95);
-			}
-			.share-modal {
-				padding: 4px;
-				width: 100%;
-			}
-			.share-modal .modal-content {
-				padding: 0;
-			}
-			.share-modal .share-form {
-				display: flex;
-				flex-direction: column;
-				gap: 14px;
-				width: 100%;
-			}
-			.share-modal .field {
-				display: flex;
-				flex-direction: column;
-				gap: 6px;
-				width: 100%;
-			}
-			.share-modal .field-label {
-				font-size: 13px;
-				color: var(--text-muted);
-			}
-			.share-modal .share-input {
-				display: block;
-				width: 100%;
-				min-height: 42px;
-				padding: 10px 12px;
-				border: 1px solid var(--background-modifier-border);
-				border-radius: 8px;
-				background: var(--background-primary);
-				color: var(--text-normal);
-				box-sizing: border-box;
-				line-height: 1.4;
-				font-size: 14px;
-				vertical-align: middle;
-			}
-			.share-modal .select-wrap {
-				position: relative;
-				width: 100%;
-			}
-			.share-modal .share-select {
-				display: block;
-				width: 100%;
-				min-height: 42px;
-				padding: 8px 30px 8px 12px;
-				border: 1px solid var(--background-modifier-border);
-				border-radius: 8px;
-				background: var(--background-primary);
-				color: var(--text-normal);
-				box-sizing: border-box;
-				line-height: 1.4;
-				font-size: 14px;
-				vertical-align: middle;
-				appearance: none;
-				-webkit-appearance: none;
-				-moz-appearance: none;
-			}
-			.share-modal .select-arrow {
-				position: absolute;
-				top: 50%;
-				right: 10px;
-				width: 12px;
-				height: 12px;
-				transform: translateY(-50%);
-				pointer-events: none;
-				color: var(--text-muted);
-				display: flex;
-				align-items: center;
-				justify-content: center;
-			}
-			.share-modal .field.is-hidden {
-				display: none;
-			}
-			.share-modal .field-help {
-				font-size: 12px;
-				color: var(--text-muted);
-			}
-			.share-modal .modal-button-container {
-				display: flex;
-				justify-content: flex-end;
-				gap: 10px;
-				margin-top: 8px;
-				flex-wrap: wrap;
-			}
-			.share-modal .modal-button-container button {
-				min-width: 88px;
-			}
-		`;
-    document.head.appendChild(style);
+  getShareButtonHost(view) {
+    view.contentEl.addClass("share-button-host");
+    return view.contentEl;
   }
   async shareCurrentNote() {
     const activeFile = this.app.workspace.getActiveFile();
@@ -270,49 +188,33 @@ var SharePlugin = class extends import_obsidian.Plugin {
       if (options == null ? void 0 : options.expiresAt) {
         payload.expiresAt = options.expiresAt;
       }
-      const response = await fetch(`${this.getApiBaseUrl()}/shares`, {
-        method: "POST",
-        headers: this.buildApiHeaders(),
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        throw new Error(`\u8BF7\u6C42\u5931\u8D25\uFF0C\u72B6\u6001\u7801\uFF1A${response.status}`);
-      }
-      const result = await response.json();
-      if (result.success && result.data) {
-        const url = result.data.url;
-        if (this.settings.autoCopyToClipboard) {
-          await navigator.clipboard.writeText(url);
-        }
-        if (this.settings.showNotification) {
-          const message = this.settings.autoCopyToClipboard ? "\u5206\u4EAB\u6210\u529F\uFF0C\u94FE\u63A5\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F" : "\u5206\u4EAB\u6210\u529F";
-          new import_obsidian.Notice(message);
-        }
-        return result.data;
-      } else {
+      const result = await this.requestShareApi("/shares", "POST", payload);
+      if (!result.success || !result.data) {
         throw new Error(result.error || "\u5206\u4EAB\u5931\u8D25");
       }
+      const { url } = result.data;
+      if (this.settings.autoCopyToClipboard) {
+        await navigator.clipboard.writeText(url);
+      }
+      if (this.settings.showNotification) {
+        const message = this.settings.autoCopyToClipboard ? "\u5206\u4EAB\u6210\u529F\uFF0C\u94FE\u63A5\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F" : "\u5206\u4EAB\u6210\u529F";
+        new import_obsidian.Notice(message);
+      }
+      return result.data;
     } catch (error) {
       console.error("Error sharing note:", error);
-      new import_obsidian.Notice(`\u5206\u4EAB\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian.Notice(`\u5206\u4EAB\u5931\u8D25\uFF1A${getErrorMessage(error)}`);
       return null;
     }
   }
   async testConnection() {
     try {
-      const response = await fetch(`${this.getApiBaseUrl()}/shares/connection-test`, {
-        method: "GET",
-        headers: this.buildApiHeaders()
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error((result == null ? void 0 : result.error) || `\u8BF7\u6C42\u5931\u8D25\uFF0C\u72B6\u6001\u7801\uFF1A${response.status}`);
-      }
+      await this.requestShareApi("/shares/connection-test", "GET");
       new import_obsidian.Notice("\u63A5\u53E3\u8FDE\u63A5\u6210\u529F\uFF0C\u5BC6\u94A5\u6821\u9A8C\u901A\u8FC7\u3002");
       return true;
     } catch (error) {
       console.error("Error testing share API connection:", error);
-      new import_obsidian.Notice(`\u63A5\u53E3\u8FDE\u63A5\u5931\u8D25\uFF1A${error.message}`);
+      new import_obsidian.Notice(`\u63A5\u53E3\u8FDE\u63A5\u5931\u8D25\uFF1A${getErrorMessage(error)}`);
       return false;
     }
   }
@@ -338,7 +240,10 @@ var ShareModal = class extends import_obsidian.Modal {
       placeholder: "\u8BF7\u8F93\u5165\u5206\u4EAB\u6807\u9898"
     });
     titleInput.value = this.defaultTitle;
-    titleField.createEl("div", { text: "\u9ED8\u8BA4\u4F7F\u7528\u5F53\u524D\u6587\u4EF6\u540D\uFF0C\u4F60\u4E5F\u53EF\u4EE5\u624B\u52A8\u4FEE\u6539\u3002", cls: "field-help" });
+    titleField.createEl("div", {
+      text: "\u9ED8\u8BA4\u4F7F\u7528\u5F53\u524D\u6587\u4EF6\u540D\uFF0C\u4F60\u4E5F\u53EF\u4EE5\u624B\u52A8\u4FEE\u6539\u3002",
+      cls: "field-help"
+    });
     const passwordField = formEl.createDiv({ cls: "field" });
     passwordField.createEl("label", { text: "\u8BBF\u95EE\u5BC6\u7801", cls: "field-label" });
     const passwordInput = passwordField.createEl("input", {
@@ -351,28 +256,39 @@ var ShareModal = class extends import_obsidian.Modal {
     expireField.createEl("label", { text: "\u6709\u6548\u671F", cls: "field-label" });
     const expireSelectWrap = expireField.createDiv({ cls: "select-wrap" });
     const expireSelect = expireSelectWrap.createEl("select", { cls: "share-select" });
-    expireSelect.innerHTML = `
-			<option value="1">1 \u5929</option>
-			<option value="7">7 \u5929</option>
-			<option value="30" selected>30 \u5929</option>
-			<option value="90">90 \u5929</option>
-			<option value="0">\u6C38\u4E0D\u8FC7\u671F</option>
-			<option value="custom">\u81EA\u5B9A\u4E49\u65E5\u671F\u65F6\u95F4</option>
-		`;
-    expireSelectWrap.createEl("span", { cls: "select-arrow", text: "\u25BE" });
+    [
+      { value: "1", text: "1 \u5929" },
+      { value: "7", text: "7 \u5929" },
+      { value: "30", text: "30 \u5929" },
+      { value: "90", text: "90 \u5929" },
+      { value: "0", text: "\u6C38\u4E0D\u8FC7\u671F" },
+      { value: "custom", text: "\u81EA\u5B9A\u4E49\u65E5\u671F\u65F6\u95F4" }
+    ].forEach((option) => {
+      const optionEl = expireSelect.createEl("option", {
+        text: option.text,
+        value: option.value
+      });
+      if (option.value === "30") {
+        optionEl.selected = true;
+      }
+    });
+    expireSelectWrap.createEl("span", { cls: "select-arrow", text: "\u25BC" });
     const customExpireField = formEl.createDiv({ cls: "field is-hidden" });
-    customExpireField.createEl("label", { text: "\u81EA\u5B9A\u4E49\u8FC7\u671F\u65F6\u95F4", cls: "field-label" });
+    customExpireField.createEl("label", {
+      text: "\u81EA\u5B9A\u4E49\u8FC7\u671F\u65F6\u95F4",
+      cls: "field-label"
+    });
     const customExpireInput = customExpireField.createEl("input", {
       type: "datetime-local",
       cls: "share-input"
     });
     customExpireField.createEl("div", {
-      text: "\u6309\u672C\u5730\u65F6\u95F4\u9009\u62E9\uFF0C\u5206\u4EAB\u4F1A\u5728\u8BE5\u65F6\u523B\u81EA\u52A8\u5931\u6548\u3002",
+      text: "\u6309\u672C\u5730\u65F6\u95F4\u9009\u62E9\uFF0C\u5230\u8FBE\u8BE5\u65F6\u95F4\u540E\u5206\u4EAB\u5C06\u81EA\u52A8\u5931\u6548\u3002",
       cls: "field-help"
     });
     const defaultCustomExpireAt = new Date();
     defaultCustomExpireAt.setHours(defaultCustomExpireAt.getHours() + 1);
-    customExpireInput.value = defaultCustomExpireAt.toISOString().slice(0, 16);
+    customExpireInput.value = formatLocalDateTimeInputValue(defaultCustomExpireAt);
     expireSelect.onchange = () => {
       customExpireField.classList.toggle("is-hidden", expireSelect.value !== "custom");
     };
@@ -384,33 +300,46 @@ var ShareModal = class extends import_obsidian.Modal {
     const cancelButton = buttonContainer.createEl("button", {
       text: "\u53D6\u6D88"
     });
-    shareButton.onclick = async () => {
-      const title = titleInput.value.trim() || this.defaultTitle;
-      const password = passwordInput.value;
-      const useCustomExpireAt = expireSelect.value === "custom";
-      const expireDays = useCustomExpireAt ? 0 : parseInt(expireSelect.value);
-      const expiresAt = useCustomExpireAt ? new Date(customExpireInput.value).toISOString() : null;
-      shareButton.disabled = true;
-      shareButton.textContent = "\u5206\u4EAB\u4E2D...";
+    shareButton.addEventListener("click", () => {
+      this.runSubmit(titleInput, passwordInput, expireSelect, customExpireInput, shareButton);
+    });
+    cancelButton.addEventListener("click", () => {
+      this.close();
+    });
+  }
+  runSubmit(titleInput, passwordInput, expireSelect, customExpireInput, shareButton) {
+    this.submitShare(titleInput, passwordInput, expireSelect, customExpireInput, shareButton).catch(
+      (error) => {
+        console.error("Unexpected error while submitting share:", error);
+        new import_obsidian.Notice(`\u5206\u4EAB\u5931\u8D25\uFF1A${getErrorMessage(error)}`);
+      }
+    );
+  }
+  async submitShare(titleInput, passwordInput, expireSelect, customExpireInput, shareButton) {
+    const title = titleInput.value.trim() || this.defaultTitle;
+    const password = passwordInput.value;
+    const useCustomExpireAt = expireSelect.value === "custom";
+    const expireDays = useCustomExpireAt ? 0 : Number.parseInt(expireSelect.value, 10);
+    const expiresAt = useCustomExpireAt && customExpireInput.value ? new Date(customExpireInput.value).toISOString() : null;
+    shareButton.disabled = true;
+    shareButton.textContent = "\u5206\u4EAB\u4E2D...";
+    try {
       const result = await this.plugin.shareNote(this.content, {
         title,
         password,
         expireDays,
         expiresAt
       });
-      shareButton.disabled = false;
-      shareButton.textContent = "\u786E\u8BA4\u5206\u4EAB";
       if (result) {
         this.close();
       }
-    };
-    cancelButton.onclick = () => {
-      this.close();
-    };
+    } finally {
+      shareButton.disabled = false;
+      shareButton.textContent = "\u786E\u8BA4\u5206\u4EAB";
+    }
   }
   onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
   }
 };
 var ShareSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -421,33 +350,52 @@ var ShareSettingTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "\u5206\u4EAB\u63D2\u4EF6\u8BBE\u7F6E" });
-    new import_obsidian.Setting(containerEl).setName("\u540E\u7AEF\u63A5\u53E3\u5730\u5740").setDesc("\u5206\u4EAB\u670D\u52A1\u540E\u7AEF API \u5730\u5740").addText((text) => text.setPlaceholder("https://s.oofo.cc/api").setValue(this.plugin.settings.apiUrl).onChange(async (value) => {
-      this.plugin.settings.apiUrl = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("\u63A5\u53E3\u5BC6\u94A5").setDesc("\u9700\u4E0E\u540E\u7AEF SHARE_API_KEY \u4FDD\u6301\u4E00\u81F4\uFF0C\u5426\u5219\u65E0\u6CD5\u5206\u4EAB").addText((text) => text.setPlaceholder("\u8BF7\u8F93\u5165\u5206\u4EAB\u63A5\u53E3\u5BC6\u94A5").setValue(this.plugin.settings.apiKey).onChange(async (value) => {
-      this.plugin.settings.apiKey = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("\u63A5\u53E3\u8FDE\u901A\u6027\u6D4B\u8BD5").setDesc("\u6D4B\u8BD5\u5F53\u524D\u63A5\u53E3\u5730\u5740\u548C\u5BC6\u94A5\u662F\u5426\u53EF\u7528").addButton((button) => button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").setCta().onClick(async () => {
-      button.setDisabled(true);
-      button.setButtonText("\u6D4B\u8BD5\u4E2D...");
-      await this.plugin.testConnection();
-      button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
-      button.setDisabled(false);
-    }));
-    new import_obsidian.Setting(containerEl).setName("\u9ED8\u8BA4\u8BBF\u95EE\u5BC6\u7801").setDesc("\u5206\u4EAB\u65F6\u9ED8\u8BA4\u5E26\u4E0A\u7684\u5BC6\u7801\uFF0C\u7559\u7A7A\u5219\u9ED8\u8BA4\u65E0\u5BC6\u7801").addText((text) => text.setPlaceholder("\u53EF\u9009\u5BC6\u7801").setValue(this.plugin.settings.defaultPassword).onChange(async (value) => {
-      this.plugin.settings.defaultPassword = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("\u81EA\u52A8\u590D\u5236\u94FE\u63A5").setDesc("\u5206\u4EAB\u6210\u529F\u540E\u81EA\u52A8\u5C06\u94FE\u63A5\u590D\u5236\u5230\u526A\u8D34\u677F").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCopyToClipboard).onChange(async (value) => {
-      this.plugin.settings.autoCopyToClipboard = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("\u663E\u793A\u901A\u77E5").setDesc("\u5206\u4EAB\u6210\u529F\u6216\u5931\u8D25\u65F6\u663E\u793A\u63D0\u793A\u901A\u77E5").addToggle((toggle) => toggle.setValue(this.plugin.settings.showNotification).onChange(async (value) => {
-      this.plugin.settings.showNotification = value;
-      await this.plugin.saveSettings();
-    }));
+    new import_obsidian.Setting(containerEl).setName("\u5206\u4EAB\u63D2\u4EF6\u8BBE\u7F6E").setHeading();
+    new import_obsidian.Setting(containerEl).setName("\u540E\u7AEF\u63A5\u53E3\u5730\u5740").setDesc("\u5206\u4EAB\u670D\u52A1\u540E\u7AEF API \u5730\u5740").addText(
+      (text) => text.setPlaceholder("https://s.oofo.cc/api").setValue(this.plugin.settings.apiUrl).onChange((value) => {
+        this.plugin.settings.apiUrl = value;
+        void this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u63A5\u53E3\u5BC6\u94A5").setDesc("\u9700\u8981\u4E0E\u540E\u7AEF\u914D\u7F6E\u7684\u5206\u4EAB\u5BC6\u94A5\u4FDD\u6301\u4E00\u81F4\uFF0C\u5426\u5219\u65E0\u6CD5\u5206\u4EAB").addText(
+      (text) => text.setPlaceholder("\u8BF7\u8F93\u5165\u5206\u4EAB\u63A5\u53E3\u5BC6\u94A5").setValue(this.plugin.settings.apiKey).onChange((value) => {
+        this.plugin.settings.apiKey = value;
+        void this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u63A5\u53E3\u8FDE\u901A\u6027\u6D4B\u8BD5").setDesc("\u6D4B\u8BD5\u5F53\u524D\u63A5\u53E3\u5730\u5740\u548C\u5BC6\u94A5\u662F\u5426\u53EF\u7528").addButton(
+      (button) => button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").setCta().onClick(() => {
+        button.setDisabled(true);
+        button.setButtonText("\u6D4B\u8BD5\u4E2D...");
+        this.plugin.testConnection().then(
+          () => {
+            button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+            button.setDisabled(false);
+          },
+          () => {
+            button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+            button.setDisabled(false);
+          }
+        );
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u9ED8\u8BA4\u8BBF\u95EE\u5BC6\u7801").setDesc("\u5206\u4EAB\u65F6\u9ED8\u8BA4\u5E26\u4E0A\u7684\u5BC6\u7801\uFF0C\u7559\u7A7A\u5219\u9ED8\u8BA4\u65E0\u5BC6\u7801").addText(
+      (text) => text.setPlaceholder("\u53EF\u9009\u5BC6\u7801").setValue(this.plugin.settings.defaultPassword).onChange((value) => {
+        this.plugin.settings.defaultPassword = value;
+        void this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u81EA\u52A8\u590D\u5236\u94FE\u63A5").setDesc("\u5206\u4EAB\u6210\u529F\u540E\u81EA\u52A8\u5C06\u94FE\u63A5\u590D\u5236\u5230\u526A\u8D34\u677F").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.autoCopyToClipboard).onChange((value) => {
+        this.plugin.settings.autoCopyToClipboard = value;
+        void this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u663E\u793A\u901A\u77E5").setDesc("\u5206\u4EAB\u6210\u529F\u6216\u5931\u8D25\u65F6\u663E\u793A\u63D0\u793A\u901A\u77E5").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.showNotification).onChange((value) => {
+        this.plugin.settings.showNotification = value;
+        void this.plugin.saveSettings();
+      })
+    );
   }
 };

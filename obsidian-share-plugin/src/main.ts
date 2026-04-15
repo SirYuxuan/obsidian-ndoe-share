@@ -1,4 +1,26 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	App,
+	Editor,
+	MarkdownFileInfo,
+	MarkdownView,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	requestUrl,
+	setIcon,
+} from 'obsidian';
+
+interface ShareResponseData {
+	url: string;
+}
+
+interface ShareApiResponse {
+	success?: boolean;
+	error?: string;
+	data?: ShareResponseData;
+}
 
 interface SharePluginSettings {
 	apiUrl: string;
@@ -13,69 +35,100 @@ const DEFAULT_SETTINGS: SharePluginSettings = {
 	apiKey: '',
 	defaultPassword: '',
 	autoCopyToClipboard: true,
-	showNotification: true
+	showNotification: true,
+};
+
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return String(error);
+}
+
+function formatLocalDateTimeInputValue(date: Date): string {
+	const offset = date.getTimezoneOffset();
+	const localDate = new Date(date.getTime() - offset * 60 * 1000);
+	return localDate.toISOString().slice(0, 16);
 }
 
 export default class SharePlugin extends Plugin {
-	settings: SharePluginSettings;
+	settings!: SharePluginSettings;
 	private shareButton: HTMLElement | null = null;
-	private stylesInjected = false;
+	private shareButtonTimeoutId: number | null = null;
 
-	async onload() {
+	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// 添加悬浮分享按钮
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.addShareButton();
 			})
 		);
 
-		// 初始化时添加按钮
-		setTimeout(() => this.addShareButton(), 1000);
-
-		// 添加右键菜单项
 		this.registerEvent(
-			this.app.workspace.on('file-menu', (menu, file) => {
+			this.app.workspace.on('layout-change', () => {
+				this.addShareButton();
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('file-open', () => {
+				this.addShareButton();
+			})
+		);
+
+		this.shareButtonTimeoutId = window.setTimeout(() => {
+			this.addShareButton();
+		}, 1000);
+
+		this.registerEvent(
+			this.app.workspace.on('file-menu', (menu) => {
 				menu.addItem((item) => {
-					item
-						.setTitle('分享当前笔记')
-						.setIcon('upload')
-						.onClick(async () => {
-							await this.shareCurrentNote();
-						});
+					item.setTitle('分享当前笔记').setIcon('upload').onClick(() => {
+						this.runTask(this.shareCurrentNote(), 'share note from file menu');
+					});
 				});
 			})
 		);
 
-		// 添加命令
 		this.addCommand({
 			id: 'share-note',
 			name: '分享当前笔记',
-			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 's' }],
-			editorCallback: async (editor: Editor, view: MarkdownView) => {
-				await this.shareCurrentNote();
-			}
+			editorCallback: (_editor: Editor, _ctx: MarkdownView | MarkdownFileInfo) => {
+				this.runTask(this.shareCurrentNote(), 'share note from command');
+			},
 		});
 
-		// 添加设置标签页
 		this.addSettingTab(new ShareSettingTab(this.app, this));
 	}
 
-	onunload() {
-		// 移除分享按钮
+	onunload(): void {
+		if (this.shareButtonTimeoutId !== null) {
+			window.clearTimeout(this.shareButtonTimeoutId);
+			this.shareButtonTimeoutId = null;
+		}
+
 		if (this.shareButton) {
 			this.shareButton.remove();
 			this.shareButton = null;
 		}
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	async loadSettings(): Promise<void> {
+		const savedSettings = (await this.loadData()) as Partial<SharePluginSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings ?? {});
 	}
 
-	async saveSettings() {
+	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	private runTask(task: Promise<unknown>, context: string): void {
+		task.catch((error: unknown) => {
+			console.error(`Unexpected error in ${context}:`, error);
+			new Notice(`操作失败：${getErrorMessage(error)}`);
+		});
 	}
 
 	private getApiBaseUrl(): string {
@@ -95,255 +148,123 @@ export default class SharePlugin extends Plugin {
 		return headers;
 	}
 
-	async addShareButton() {
-		// 移除旧的按钮
+	private async requestShareApi(
+		path: string,
+		method: 'GET' | 'POST',
+		body?: Record<string, unknown>
+	): Promise<ShareApiResponse> {
+		const response = await requestUrl({
+			url: `${this.getApiBaseUrl()}${path}`,
+			method,
+			headers: this.buildApiHeaders(),
+			body: body ? JSON.stringify(body) : undefined,
+		});
+
+		const result = (response.json ?? {}) as ShareApiResponse;
+		if (response.status >= 400) {
+			throw new Error(result.error || `请求失败，状态码：${response.status}`);
+		}
+
+		return result;
+	}
+
+	addShareButton(): void {
 		if (this.shareButton) {
 			this.shareButton.remove();
 			this.shareButton = null;
 		}
 
-		const activeLeaf = this.app.workspace.activeLeaf;
-		if (!activeLeaf) return;
-
-		const view = activeLeaf.view;
-		if (view.getViewType() !== 'markdown') return;
-
-		// 获取编辑器容器
-		const editorContainer = view.containerEl.querySelector('.cm-editor');
-		if (!editorContainer) return;
-
-		// 创建悬浮按钮
-		this.shareButton = document.createElement('div');
-		this.shareButton.className = 'share-floating-button';
-		this.shareButton.innerHTML = `
-			<button class="share-button" aria-label="分享当前笔记">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
-					<polyline points="16 6 12 2 8 6"></polyline>
-					<line x1="12" y1="2" x2="12" y2="15"></line>
-				</svg>
-			</button>
-		`;
-
-		if (!this.stylesInjected) {
-			this.injectStyles();
-			this.stylesInjected = true;
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view || view.getViewType() !== 'markdown') {
+			return;
 		}
 
-		// 添加点击事件
-		this.shareButton.querySelector('.share-button')?.addEventListener('click', async () => {
-			await this.shareCurrentNote();
+		const buttonHost = this.getShareButtonHost(view);
+
+		this.shareButton = document.createElement('div');
+		this.shareButton.className = 'share-floating-button';
+
+		const shareButton = this.shareButton.createEl('button', {
+			cls: 'share-button',
+			attr: {
+				'aria-label': '分享当前笔记',
+			},
 		});
 
-		// 添加到编辑器容器
-		editorContainer.appendChild(this.shareButton);
+		setIcon(shareButton, 'upload');
+		shareButton.addEventListener('click', () => {
+			this.runTask(this.shareCurrentNote(), 'share note from floating button');
+		});
+
+		buttonHost.appendChild(this.shareButton);
 	}
 
-	private injectStyles() {
-		const style = document.createElement('style');
-		style.id = 'obsidian-share-plugin-styles';
-		style.textContent = `
-			.share-floating-button {
-				position: absolute;
-				top: 20px;
-				right: 20px;
-				z-index: 1000;
-			}
-			.share-button {
-				background: var(--interactive-accent);
-				color: white;
-				border: none;
-				border-radius: 50%;
-				width: 40px;
-				height: 40px;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				cursor: pointer;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-				transition: all 0.2s ease;
-			}
-			.share-button:hover {
-				transform: scale(1.1);
-				box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-			}
-			.share-button:active {
-				transform: scale(0.95);
-			}
-			.share-modal {
-				padding: 4px;
-				width: 100%;
-			}
-			.share-modal .modal-content {
-				padding: 0;
-			}
-			.share-modal .share-form {
-				display: flex;
-				flex-direction: column;
-				gap: 14px;
-				width: 100%;
-			}
-			.share-modal .field {
-				display: flex;
-				flex-direction: column;
-				gap: 6px;
-				width: 100%;
-			}
-			.share-modal .field-label {
-				font-size: 13px;
-				color: var(--text-muted);
-			}
-			.share-modal .share-input {
-				display: block;
-				width: 100%;
-				min-height: 42px;
-				padding: 10px 12px;
-				border: 1px solid var(--background-modifier-border);
-				border-radius: 8px;
-				background: var(--background-primary);
-				color: var(--text-normal);
-				box-sizing: border-box;
-				line-height: 1.4;
-				font-size: 14px;
-				vertical-align: middle;
-			}
-			.share-modal .select-wrap {
-				position: relative;
-				width: 100%;
-			}
-			.share-modal .share-select {
-				display: block;
-				width: 100%;
-				min-height: 42px;
-				padding: 8px 30px 8px 12px;
-				border: 1px solid var(--background-modifier-border);
-				border-radius: 8px;
-				background: var(--background-primary);
-				color: var(--text-normal);
-				box-sizing: border-box;
-				line-height: 1.4;
-				font-size: 14px;
-				vertical-align: middle;
-				appearance: none;
-				-webkit-appearance: none;
-				-moz-appearance: none;
-			}
-			.share-modal .select-arrow {
-				position: absolute;
-				top: 50%;
-				right: 10px;
-				width: 12px;
-				height: 12px;
-				transform: translateY(-50%);
-				pointer-events: none;
-				color: var(--text-muted);
-				display: flex;
-				align-items: center;
-				justify-content: center;
-			}
-			.share-modal .field.is-hidden {
-				display: none;
-			}
-			.share-modal .field-help {
-				font-size: 12px;
-				color: var(--text-muted);
-			}
-			.share-modal .modal-button-container {
-				display: flex;
-				justify-content: flex-end;
-				gap: 10px;
-				margin-top: 8px;
-				flex-wrap: wrap;
-			}
-			.share-modal .modal-button-container button {
-				min-width: 88px;
-			}
-		`;
-
-		document.head.appendChild(style);
+	private getShareButtonHost(view: MarkdownView): HTMLElement {
+		view.contentEl.addClass('share-button-host');
+		return view.contentEl;
 	}
 
-	async shareCurrentNote() {
+	async shareCurrentNote(): Promise<void> {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) {
 			new Notice('未找到当前打开的文件。');
 			return;
 		}
 
-		// 读取文件内容
 		const content = await this.app.vault.read(activeFile);
-
-		// 显示分享模态框
 		new ShareModal(this.app, this, content, activeFile.basename).open();
 	}
 
-	async shareNote(content: string, options?: { title?: string, password?: string, expireDays?: number, expiresAt?: string | null }) {
+	async shareNote(
+		content: string,
+		options?: { title?: string; password?: string; expireDays?: number; expiresAt?: string | null }
+	): Promise<ShareResponseData | null> {
 		try {
 			const payload: Record<string, unknown> = {
 				title: options?.title || '未命名分享',
-				content: content,
+				content,
 				password: options?.password || '',
-				expireDays: options?.expireDays ?? 30
+				expireDays: options?.expireDays ?? 30,
 			};
 
 			if (options?.expiresAt) {
 				payload.expiresAt = options.expiresAt;
 			}
 
-			const response = await fetch(`${this.getApiBaseUrl()}/shares`, {
-				method: 'POST',
-				headers: this.buildApiHeaders(),
-				body: JSON.stringify(payload)
-			});
-
-			if (!response.ok) {
-				throw new Error(`请求失败，状态码：${response.status}`);
-			}
-
-			const result = await response.json();
-
-			if (result.success && result.data) {
-				const url = result.data.url;
-
-				if (this.settings.autoCopyToClipboard) {
-					await navigator.clipboard.writeText(url);
-				}
-
-				if (this.settings.showNotification) {
-					const message = this.settings.autoCopyToClipboard
-						? '分享成功，链接已复制到剪贴板'
-						: '分享成功';
-					new Notice(message);
-				}
-
-				return result.data;
-			} else {
+			const result = await this.requestShareApi('/shares', 'POST', payload);
+			if (!result.success || !result.data) {
 				throw new Error(result.error || '分享失败');
 			}
-		} catch (error) {
+
+			const { url } = result.data;
+
+			if (this.settings.autoCopyToClipboard) {
+				await navigator.clipboard.writeText(url);
+			}
+
+			if (this.settings.showNotification) {
+				const message = this.settings.autoCopyToClipboard
+					? '分享成功，链接已复制到剪贴板'
+					: '分享成功';
+				new Notice(message);
+			}
+
+			return result.data;
+		} catch (error: unknown) {
 			console.error('Error sharing note:', error);
-			new Notice(`分享失败：${error.message}`);
+			new Notice(`分享失败：${getErrorMessage(error)}`);
 			return null;
 		}
 	}
 
-	async testConnection() {
+	async testConnection(): Promise<boolean> {
 		try {
-			const response = await fetch(`${this.getApiBaseUrl()}/shares/connection-test`, {
-				method: 'GET',
-				headers: this.buildApiHeaders()
-			});
-
-			const result = await response.json().catch(() => null);
-			if (!response.ok) {
-				throw new Error(result?.error || `请求失败，状态码：${response.status}`);
-			}
-
+			await this.requestShareApi('/shares/connection-test', 'GET');
 			new Notice('接口连接成功，密钥校验通过。');
 			return true;
-		} catch (error) {
+		} catch (error: unknown) {
 			console.error('Error testing share API connection:', error);
-			new Notice(`接口连接失败：${error.message}`);
+			new Notice(`接口连接失败：${getErrorMessage(error)}`);
 			return false;
 		}
 	}
@@ -361,7 +282,7 @@ class ShareModal extends Modal {
 		this.defaultTitle = defaultTitle;
 	}
 
-	onOpen() {
+	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('share-modal');
@@ -374,18 +295,20 @@ class ShareModal extends Modal {
 		const titleInput = titleField.createEl('input', {
 			type: 'text',
 			cls: 'share-input',
-			placeholder: '请输入分享标题'
+			placeholder: '请输入分享标题',
 		});
 		titleInput.value = this.defaultTitle;
-		titleField.createEl('div', { text: '默认使用当前文件名，你也可以手动修改。', cls: 'field-help' });
+		titleField.createEl('div', {
+			text: '默认使用当前文件名，你也可以手动修改。',
+			cls: 'field-help',
+		});
 
 		const passwordField = formEl.createDiv({ cls: 'field' });
 		passwordField.createEl('label', { text: '访问密码', cls: 'field-label' });
-
 		const passwordInput = passwordField.createEl('input', {
 			type: 'password',
 			cls: 'share-input',
-			placeholder: '留空则无需密码'
+			placeholder: '留空则无需密码',
 		});
 		passwordInput.value = this.plugin.settings.defaultPassword;
 
@@ -393,28 +316,44 @@ class ShareModal extends Modal {
 		expireField.createEl('label', { text: '有效期', cls: 'field-label' });
 		const expireSelectWrap = expireField.createDiv({ cls: 'select-wrap' });
 		const expireSelect = expireSelectWrap.createEl('select', { cls: 'share-select' });
-		expireSelect.innerHTML = `
-			<option value="1">1 天</option>
-			<option value="7">7 天</option>
-			<option value="30" selected>30 天</option>
-			<option value="90">90 天</option>
-			<option value="0">永不过期</option>
-			<option value="custom">自定义日期时间</option>
-		`;
-		expireSelectWrap.createEl('span', { cls: 'select-arrow', text: '▾' });
+
+		[
+			{ value: '1', text: '1 天' },
+			{ value: '7', text: '7 天' },
+			{ value: '30', text: '30 天' },
+			{ value: '90', text: '90 天' },
+			{ value: '0', text: '永不过期' },
+			{ value: 'custom', text: '自定义日期时间' },
+		].forEach((option) => {
+			const optionEl = expireSelect.createEl('option', {
+				text: option.text,
+				value: option.value,
+			});
+
+			if (option.value === '30') {
+				optionEl.selected = true;
+			}
+		});
+
+		expireSelectWrap.createEl('span', { cls: 'select-arrow', text: '▼' });
+
 		const customExpireField = formEl.createDiv({ cls: 'field is-hidden' });
-		customExpireField.createEl('label', { text: '自定义过期时间', cls: 'field-label' });
+		customExpireField.createEl('label', {
+			text: '自定义过期时间',
+			cls: 'field-label',
+		});
 		const customExpireInput = customExpireField.createEl('input', {
 			type: 'datetime-local',
-			cls: 'share-input'
+			cls: 'share-input',
 		});
 		customExpireField.createEl('div', {
-			text: '按本地时间选择，分享会在该时刻自动失效。',
-			cls: 'field-help'
+			text: '按本地时间选择，到达该时间后分享将自动失效。',
+			cls: 'field-help',
 		});
+
 		const defaultCustomExpireAt = new Date();
 		defaultCustomExpireAt.setHours(defaultCustomExpireAt.getHours() + 1);
-		customExpireInput.value = defaultCustomExpireAt.toISOString().slice(0, 16);
+		customExpireInput.value = formatLocalDateTimeInputValue(defaultCustomExpireAt);
 
 		expireSelect.onchange = () => {
 			customExpireField.classList.toggle('is-hidden', expireSelect.value !== 'custom');
@@ -424,46 +363,75 @@ class ShareModal extends Modal {
 
 		const shareButton = buttonContainer.createEl('button', {
 			text: '确认分享',
-			cls: 'mod-cta'
+			cls: 'mod-cta',
 		});
 
 		const cancelButton = buttonContainer.createEl('button', {
-			text: '取消'
+			text: '取消',
 		});
 
-		shareButton.onclick = async () => {
-			const title = titleInput.value.trim() || this.defaultTitle;
-			const password = passwordInput.value;
-			const useCustomExpireAt = expireSelect.value === 'custom';
-			const expireDays = useCustomExpireAt ? 0 : parseInt(expireSelect.value);
-			const expiresAt = useCustomExpireAt ? new Date(customExpireInput.value).toISOString() : null;
+		shareButton.addEventListener('click', () => {
+			this.runSubmit(titleInput, passwordInput, expireSelect, customExpireInput, shareButton);
+		});
 
-			shareButton.disabled = true;
-			shareButton.textContent = '分享中...';
+		cancelButton.addEventListener('click', () => {
+			this.close();
+		});
+	}
 
+	private runSubmit(
+		titleInput: HTMLInputElement,
+		passwordInput: HTMLInputElement,
+		expireSelect: HTMLSelectElement,
+		customExpireInput: HTMLInputElement,
+		shareButton: HTMLButtonElement
+	): void {
+		this.submitShare(titleInput, passwordInput, expireSelect, customExpireInput, shareButton).catch(
+			(error: unknown) => {
+				console.error('Unexpected error while submitting share:', error);
+				new Notice(`分享失败：${getErrorMessage(error)}`);
+			}
+		);
+	}
+
+	private async submitShare(
+		titleInput: HTMLInputElement,
+		passwordInput: HTMLInputElement,
+		expireSelect: HTMLSelectElement,
+		customExpireInput: HTMLInputElement,
+		shareButton: HTMLButtonElement
+	): Promise<void> {
+		const title = titleInput.value.trim() || this.defaultTitle;
+		const password = passwordInput.value;
+		const useCustomExpireAt = expireSelect.value === 'custom';
+		const expireDays = useCustomExpireAt ? 0 : Number.parseInt(expireSelect.value, 10);
+		const expiresAt =
+			useCustomExpireAt && customExpireInput.value
+				? new Date(customExpireInput.value).toISOString()
+				: null;
+
+		shareButton.disabled = true;
+		shareButton.textContent = '分享中...';
+
+		try {
 			const result = await this.plugin.shareNote(this.content, {
-				title: title,
-				password: password,
-				expireDays: expireDays,
-				expiresAt: expiresAt
+				title,
+				password,
+				expireDays,
+				expiresAt,
 			});
-
-			shareButton.disabled = false;
-			shareButton.textContent = '确认分享';
 
 			if (result) {
 				this.close();
 			}
-		};
-
-		cancelButton.onclick = () => {
-			this.close();
-		};
+		} finally {
+			shareButton.disabled = false;
+			shareButton.textContent = '确认分享';
+		}
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }
 
@@ -477,76 +445,88 @@ class ShareSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const { containerEl } = this;
-
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: '分享插件设置' });
+		new Setting(containerEl).setName('分享插件设置').setHeading();
 
 		new Setting(containerEl)
 			.setName('后端接口地址')
 			.setDesc('分享服务后端 API 地址')
-			.addText(text => text
-				.setPlaceholder('https://s.oofo.cc/api')
-				.setValue(this.plugin.settings.apiUrl)
-				.onChange(async (value) => {
-					this.plugin.settings.apiUrl = value;
-					await this.plugin.saveSettings();
-				}));
+			.addText((text) =>
+				text
+					.setPlaceholder('https://s.oofo.cc/api')
+					.setValue(this.plugin.settings.apiUrl)
+					.onChange((value) => {
+						this.plugin.settings.apiUrl = value;
+						void this.plugin.saveSettings();
+					})
+			);
 
 		new Setting(containerEl)
 			.setName('接口密钥')
-			.setDesc('需与后端 SHARE_API_KEY 保持一致，否则无法分享')
-			.addText(text => text
-				.setPlaceholder('请输入分享接口密钥')
-				.setValue(this.plugin.settings.apiKey)
-				.onChange(async (value) => {
-					this.plugin.settings.apiKey = value;
-					await this.plugin.saveSettings();
-				}));
+			.setDesc('需要与后端配置的分享密钥保持一致，否则无法分享')
+			.addText((text) =>
+				text
+					.setPlaceholder('请输入分享接口密钥')
+					.setValue(this.plugin.settings.apiKey)
+					.onChange((value) => {
+						this.plugin.settings.apiKey = value;
+						void this.plugin.saveSettings();
+					})
+			);
 
 		new Setting(containerEl)
 			.setName('接口连通性测试')
 			.setDesc('测试当前接口地址和密钥是否可用')
-			.addButton(button => button
-				.setButtonText('测试连接')
-				.setCta()
-				.onClick(async () => {
+			.addButton((button) =>
+				button.setButtonText('测试连接').setCta().onClick(() => {
 					button.setDisabled(true);
 					button.setButtonText('测试中...');
-					await this.plugin.testConnection();
-					button.setButtonText('测试连接');
-					button.setDisabled(false);
-				}));
+
+					this.plugin.testConnection().then(
+						() => {
+							button.setButtonText('测试连接');
+							button.setDisabled(false);
+						},
+						() => {
+							button.setButtonText('测试连接');
+							button.setDisabled(false);
+						}
+					);
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('默认访问密码')
 			.setDesc('分享时默认带上的密码，留空则默认无密码')
-			.addText(text => text
-				.setPlaceholder('可选密码')
-				.setValue(this.plugin.settings.defaultPassword)
-				.onChange(async (value) => {
-					this.plugin.settings.defaultPassword = value;
-					await this.plugin.saveSettings();
-				}));
+			.addText((text) =>
+				text
+					.setPlaceholder('可选密码')
+					.setValue(this.plugin.settings.defaultPassword)
+					.onChange((value) => {
+						this.plugin.settings.defaultPassword = value;
+						void this.plugin.saveSettings();
+					})
+			);
 
 		new Setting(containerEl)
 			.setName('自动复制链接')
 			.setDesc('分享成功后自动将链接复制到剪贴板')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoCopyToClipboard)
-				.onChange(async (value) => {
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.autoCopyToClipboard).onChange((value) => {
 					this.plugin.settings.autoCopyToClipboard = value;
-					await this.plugin.saveSettings();
-				}));
+					void this.plugin.saveSettings();
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('显示通知')
 			.setDesc('分享成功或失败时显示提示通知')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.showNotification)
-				.onChange(async (value) => {
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showNotification).onChange((value) => {
 					this.plugin.settings.showNotification = value;
-					await this.plugin.saveSettings();
-				}));
+					void this.plugin.saveSettings();
+				})
+			);
 	}
 }

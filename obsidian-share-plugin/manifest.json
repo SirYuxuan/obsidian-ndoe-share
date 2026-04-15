@@ -1,10 +1,10 @@
 {
   "id": "yx-md-share",
   "name": "YxMdShare",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minAppVersion": "0.15.0",
   "description": "Share notes with password protection, expiration settings, and a self-hosted share service.",
-  "author": "Sir丶雨轩",
+  "author": "SirYuxuan",
   "authorUrl": "https://oofo.cc",
   "fundingUrl": "",
   "isDesktopOnly": false
